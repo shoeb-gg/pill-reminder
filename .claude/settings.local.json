@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(C:/flutter/bin/flutter pub get)",
+      "Bash(C:/flutter/bin/flutter pub run build_runner build --delete-conflicting-outputs)",
+      "Bash(C:/flutter/bin/flutter pub run build_runner clean:*)",
+      "Bash(C:/flutter/bin/flutter analyze:*)"
+    ]
+  }
+}
