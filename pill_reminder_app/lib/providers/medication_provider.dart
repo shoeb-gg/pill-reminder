@@ -3,6 +3,7 @@ import 'package:uuid/uuid.dart';
 import '../models/medication.dart';
 import '../models/dose_log.dart';
 import '../services/database_service.dart';
+import '../services/notification_service.dart';
 
 // Database service provider
 final databaseServiceProvider = Provider<DatabaseService>((ref) {
@@ -56,14 +57,23 @@ class MedicationsNotifier extends StateNotifier<List<Medication>> {
 
     await _dbService.addMedication(medication);
     _loadMedications();
+
+    // Schedule notifications for this medication
+    await NotificationService().scheduleMedicationReminders(medication);
   }
 
   Future<void> updateMedication(Medication medication) async {
     await _dbService.updateMedication(medication);
     _loadMedications();
+
+    // Reschedule notifications for this medication
+    await NotificationService().scheduleMedicationReminders(medication);
   }
 
   Future<void> deleteMedication(String id) async {
+    // Cancel notifications before deleting
+    await NotificationService().cancelMedicationReminders(id);
+
     await _dbService.deleteMedication(id);
     _loadMedications();
   }
@@ -117,7 +127,7 @@ class DoseLogsNotifier extends StateNotifier<List<DoseLog>> {
     loadLogsForDate(log.scheduledTime);
   }
 
-  Future<void> markDoseTaken(DoseLog log, int pillsTaken) async {
+  Future<void> markDoseTaken(DoseLog log, int pillsTaken, {Medication? medication}) async {
     final updatedLog = log.copyWith(
       status: DoseStatus.taken,
       actionTime: DateTime.now(),
@@ -125,15 +135,41 @@ class DoseLogsNotifier extends StateNotifier<List<DoseLog>> {
     );
     await _dbService.updateDoseLog(updatedLog);
     loadLogsForDate(log.scheduledTime);
+
+    // Cancel the notification for this dose
+    if (medication != null) {
+      _cancelNotificationForDose(log, medication);
+    }
   }
 
-  Future<void> markDoseSkipped(DoseLog log) async {
+  Future<void> markDoseSkipped(DoseLog log, {Medication? medication}) async {
     final updatedLog = log.copyWith(
       status: DoseStatus.skipped,
       actionTime: DateTime.now(),
     );
     await _dbService.updateDoseLog(updatedLog);
     loadLogsForDate(log.scheduledTime);
+
+    // Cancel the notification for this dose
+    if (medication != null) {
+      _cancelNotificationForDose(log, medication);
+    }
+  }
+
+  void _cancelNotificationForDose(DoseLog log, Medication medication) {
+    // Find the time index for this scheduled time
+    final scheduledTimeStr =
+        '${log.scheduledTime.hour.toString().padLeft(2, '0')}:${log.scheduledTime.minute.toString().padLeft(2, '0')}';
+    final timeIndex = medication.scheduledTimes.indexOf(scheduledTimeStr);
+
+    if (timeIndex >= 0) {
+      final weekday = log.scheduledTime.weekday;
+      NotificationService().cancelNotificationForDose(
+        medication.id,
+        timeIndex,
+        weekday,
+      );
+    }
   }
 
   Future<void> markDoseMissed(DoseLog log) async {

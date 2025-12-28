@@ -10,6 +10,7 @@ class MedicationCard extends StatelessWidget {
   final DoseLog doseLog;
   final VoidCallback onTake;
   final VoidCallback onSkip;
+  final VoidCallback? onTap;
 
   const MedicationCard({
     super.key,
@@ -17,6 +18,7 @@ class MedicationCard extends StatelessWidget {
     required this.doseLog,
     required this.onTake,
     required this.onSkip,
+    this.onTap,
   });
 
   @override
@@ -26,7 +28,9 @@ class MedicationCard extends StatelessWidget {
     final isSkipped = doseLog.status == DoseStatus.skipped;
     final isPending = doseLog.status == DoseStatus.pending;
 
-    return Container(
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: AppColors.card,
@@ -119,6 +123,7 @@ class MedicationCard extends StatelessWidget {
               onTap: () {},
             ),
         ],
+      ),
       ),
     );
   }

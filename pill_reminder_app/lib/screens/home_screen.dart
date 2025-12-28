@@ -32,6 +32,26 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final todayWeekday = today.weekday; // 1=Mon, 2=Tue, ..., 7=Sun
     final existingLogs = dbService.getDoseLogsForDate(today);
 
+    // Clean up stale logs for medications not scheduled today
+    for (final log in existingLogs) {
+      final medication = medications.firstWhere(
+        (m) => m.id == log.medicationId,
+        orElse: () => Medication(
+          id: '',
+          name: '',
+          dosage: '',
+          scheduledTimes: [],
+          currentStock: 0,
+        ),
+      );
+      // Delete log if medication doesn't exist or today isn't a reminder day
+      if (medication.id.isEmpty ||
+          medication.reminderDays.isEmpty ||
+          !medication.reminderDays.contains(todayWeekday)) {
+        dbService.deleteDoseLog(log.id);
+      }
+    }
+
     for (final medication in medications) {
       // Skip if today is not in reminder days (empty means no reminders)
       if (medication.reminderDays.isEmpty ||
@@ -88,54 +108,22 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           },
           child: CustomScrollView(
             slivers: [
-              // Header
+              // Header with notification icon
               SliverToBoxAdapter(
                 child: Padding(
-                  padding: const EdgeInsets.all(20),
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      CircleAvatar(
-                        radius: 24,
-                        backgroundColor: AppColors.primary,
-                        child: Text(
-                          'PR',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
+                      Text(
+                        "Today's Reminders",
+                        style: Theme.of(context).textTheme.headlineMedium,
                       ),
-                      Row(
-                        children: [
-                          _HeaderIconButton(
-                            icon: Icons.notifications_outlined,
-                            hasNotification: lowStockMeds.isNotEmpty,
-                            onTap: () {
-                              _showLowStockDialog(context, lowStockMeds);
-                            },
-                          ),
-                          const SizedBox(width: 12),
-                          _HeaderIconButton(
-                            icon: Icons.settings_outlined,
-                            onTap: () {
-                              // Navigate to settings via bottom nav
-                            },
-                          ),
-                        ],
+                      _NotificationButton(
+                        hasNotification: lowStockMeds.isNotEmpty,
+                        onTap: () => _showLowStockDialog(context, lowStockMeds),
                       ),
                     ],
-                  ),
-                ),
-              ),
-
-              // Today's Reminders Title
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: Text(
-                    "Today's Reminders",
-                    style: Theme.of(context).textTheme.headlineMedium,
                   ),
                 ),
               ),
@@ -155,14 +143,18 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                           ),
                           const SizedBox(height: 16),
                           Text(
-                            'No medications scheduled for today',
+                            medications.isEmpty
+                                ? 'No medications added yet'
+                                : 'No medications scheduled for today',
                             style: TextStyle(color: AppColors.textSecondary),
                           ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'Add a medication to get started',
-                            style: TextStyle(color: AppColors.textMuted),
-                          ),
+                          if (medications.isEmpty) ...[
+                            const SizedBox(height: 8),
+                            Text(
+                              'Add a medication to get started',
+                              style: TextStyle(color: AppColors.textMuted),
+                            ),
+                          ],
                         ],
                       ),
                     ),
@@ -191,7 +183,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                             medication: medication,
                             doseLog: log,
                             onTake: () => _handleTakeDose(log, medication),
-                            onSkip: () => _handleSkipDose(log),
+                            onSkip: () => _handleSkipDose(log, medication),
+                            onTap: () => _navigateToEditMedication(medication),
                           ),
                         );
                       },
@@ -258,7 +251,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     delegate: SliverChildBuilderDelegate(
                       (context, index) {
                         final medication = medications[index];
-                        return InventoryCard(medication: medication);
+                        return InventoryCard(
+                          medication: medication,
+                          onTap: () => _navigateToEditMedication(medication),
+                        );
                       },
                       childCount: medications.length > 4 ? 4 : medications.length,
                     ),
@@ -294,8 +290,21 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
+  void _navigateToEditMedication(Medication medication) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => AddEditMedicationScreen(medication: medication),
+      ),
+    ).then((_) => _generateTodaysDoses());
+  }
+
   void _handleTakeDose(DoseLog log, Medication medication) {
-    ref.read(doseLogsProvider.notifier).markDoseTaken(log, medication.pillsPerDose);
+    ref.read(doseLogsProvider.notifier).markDoseTaken(
+          log,
+          medication.pillsPerDose,
+          medication: medication,
+        );
     ref.read(medicationsProvider.notifier).decrementStock(
           medication.id,
           medication.pillsPerDose,
@@ -308,8 +317,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
-  void _handleSkipDose(DoseLog log) {
-    ref.read(doseLogsProvider.notifier).markDoseSkipped(log);
+  void _handleSkipDose(DoseLog log, Medication medication) {
+    ref.read(doseLogsProvider.notifier).markDoseSkipped(log, medication: medication);
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('Dose skipped'),
@@ -319,6 +328,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   void _showLowStockDialog(BuildContext context, List<Medication> lowStockMeds) {
+    if (lowStockMeds.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No low stock alerts'),
+          backgroundColor: AppColors.success,
+        ),
+      );
+      return;
+    }
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -352,13 +370,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 }
 
-class _HeaderIconButton extends StatelessWidget {
-  final IconData icon;
+class _NotificationButton extends StatelessWidget {
   final bool hasNotification;
   final VoidCallback onTap;
 
-  const _HeaderIconButton({
-    required this.icon,
+  const _NotificationButton({
     this.hasNotification = false,
     required this.onTap,
   });
@@ -377,7 +393,9 @@ class _HeaderIconButton extends StatelessWidget {
         ),
         child: Stack(
           children: [
-            Center(child: Icon(icon, color: AppColors.textSecondary)),
+            Center(
+              child: Icon(Icons.notifications_outlined, color: AppColors.textSecondary),
+            ),
             if (hasNotification)
               Positioned(
                 right: 10,

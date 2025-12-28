@@ -4,17 +4,21 @@ import '../models/medication.dart';
 
 class InventoryCard extends StatelessWidget {
   final Medication medication;
+  final VoidCallback? onTap;
 
   const InventoryCard({
     super.key,
     required this.medication,
+    this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
     final isLow = medication.isLowStock;
 
-    return Container(
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: AppColors.card,
@@ -64,6 +68,7 @@ class InventoryCard extends StatelessWidget {
             ],
           ),
         ],
+      ),
       ),
     );
   }
