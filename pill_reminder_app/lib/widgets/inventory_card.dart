@@ -48,6 +48,7 @@ class InventoryCard extends StatelessWidget {
           const SizedBox(height: 8),
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
             children: [
               Container(
                 width: 8,
@@ -58,11 +59,14 @@ class InventoryCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 6),
-              Text(
-                '${medication.currentStock} remaining',
-                style: TextStyle(
-                  fontSize: 13,
-                  color: isLow ? AppColors.danger : AppColors.primary,
+              Flexible(
+                child: Text(
+                  '${medication.currentStock} left',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: isLow ? AppColors.danger : AppColors.primary,
+                  ),
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
             ],

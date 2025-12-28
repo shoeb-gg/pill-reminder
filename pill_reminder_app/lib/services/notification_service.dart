@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest.dart' as tz_data;
+import 'package:flutter_timezone/flutter_timezone.dart';
 import '../models/medication.dart';
 
 // Callback for handling notification actions in background
@@ -28,6 +29,25 @@ class NotificationService {
 
     // Initialize timezone
     tz_data.initializeTimeZones();
+
+    String timeZoneName;
+    try {
+      timeZoneName = await FlutterTimezone.getLocalTimezone();
+
+      // If it returns UTC but device offset suggests otherwise, find the correct timezone
+      if (timeZoneName == 'UTC') {
+        final deviceOffset = DateTime.now().timeZoneOffset;
+        if (deviceOffset.inMinutes != 0) {
+          timeZoneName = _findTimezoneByOffset(deviceOffset);
+        }
+      }
+    } catch (e) {
+      // Fallback based on device offset
+      final deviceOffset = DateTime.now().timeZoneOffset;
+      timeZoneName = _findTimezoneByOffset(deviceOffset);
+    }
+
+    tz.setLocalLocation(tz.getLocation(timeZoneName));
 
     // Android settings
     const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
@@ -82,7 +102,9 @@ class NotificationService {
     await cancelMedicationReminders(medication.id);
 
     // Don't schedule if no reminder days selected
-    if (medication.reminderDays.isEmpty) return;
+    if (medication.reminderDays.isEmpty) {
+      return;
+    }
 
     // Schedule notification for each time slot
     for (int i = 0; i < medication.scheduledTimes.length; i++) {
@@ -199,6 +221,32 @@ class NotificationService {
     return (hash % 10000) * 100 + timeIndex * 10 + day;
   }
 
+  /// Find a timezone name based on UTC offset
+  String _findTimezoneByOffset(Duration offset) {
+    final offsetHours = offset.inHours;
+    final offsetMinutes = offset.inMinutes % 60;
+
+    // Map common offsets to timezone names
+    final offsetMap = {
+      6 * 60: 'Asia/Dhaka',        // UTC+6
+      5 * 60 + 30: 'Asia/Kolkata', // UTC+5:30
+      5 * 60: 'Asia/Karachi',      // UTC+5
+      8 * 60: 'Asia/Singapore',    // UTC+8
+      9 * 60: 'Asia/Tokyo',        // UTC+9
+      7 * 60: 'Asia/Bangkok',      // UTC+7
+      3 * 60: 'Europe/Moscow',     // UTC+3
+      1 * 60: 'Europe/Paris',      // UTC+1
+      0: 'UTC',                    // UTC+0
+      -5 * 60: 'America/New_York', // UTC-5
+      -6 * 60: 'America/Chicago',  // UTC-6
+      -7 * 60: 'America/Denver',   // UTC-7
+      -8 * 60: 'America/Los_Angeles', // UTC-8
+    };
+
+    final totalMinutes = offsetHours * 60 + offsetMinutes;
+    return offsetMap[totalMinutes] ?? 'UTC';
+  }
+
   Future<void> cancelMedicationReminders(String medicationId) async {
     // Cancel all possible notifications for this medication
     // We generate IDs for all possible combinations
@@ -243,6 +291,30 @@ class NotificationService {
           priority: Priority.high,
         ),
       ),
+    );
+  }
+
+  /// Schedule a test notification 5 seconds from now
+  Future<void> scheduleTestNotification() async {
+    final scheduledDate = tz.TZDateTime.now(tz.local).add(const Duration(seconds: 5));
+
+    await _notifications.zonedSchedule(
+      999,
+      'Scheduled Test',
+      'This notification was scheduled 5 seconds ago!',
+      scheduledDate,
+      NotificationDetails(
+        android: AndroidNotificationDetails(
+          'medication_reminders',
+          'Medication Reminders',
+          channelDescription: 'Notifications for medication reminders',
+          importance: Importance.high,
+          priority: Priority.high,
+        ),
+      ),
+      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+      uiLocalNotificationDateInterpretation:
+          UILocalNotificationDateInterpretation.absoluteTime,
     );
   }
 }

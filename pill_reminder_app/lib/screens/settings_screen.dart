@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../theme/app_colors.dart';
+import '../services/notification_service.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -56,6 +57,34 @@ class SettingsScreen extends StatelessWidget {
                             return null;
                           }),
                         ),
+                      ),
+                      _SettingsTile(
+                        icon: Icons.science_outlined,
+                        title: 'Test Notification (Instant)',
+                        subtitle: 'Send a test notification now',
+                        onTap: () {
+                          NotificationService().showTestNotification();
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Test notification sent!'),
+                              backgroundColor: AppColors.success,
+                            ),
+                          );
+                        },
+                      ),
+                      _SettingsTile(
+                        icon: Icons.schedule_outlined,
+                        title: 'Test Scheduled (5 sec)',
+                        subtitle: 'Schedule a notification for 5 seconds',
+                        onTap: () {
+                          NotificationService().scheduleTestNotification();
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Notification scheduled in 5 seconds!'),
+                              backgroundColor: AppColors.success,
+                            ),
+                          );
+                        },
                       ),
                     ],
                   ),

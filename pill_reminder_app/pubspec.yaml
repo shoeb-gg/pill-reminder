@@ -47,6 +47,7 @@ dependencies:
 
   # Timezone support for scheduling
   timezone: ^0.10.0
+  flutter_timezone: ^3.0.1
 
   # UUID generation
   uuid: ^4.5.1
