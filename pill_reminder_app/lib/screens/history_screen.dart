@@ -274,7 +274,7 @@ class _HistoryItem extends StatelessWidget {
         statusIcon = Icons.check;
         break;
       case DoseStatus.skipped:
-        statusText = 'Skipped at ${timeFormat.format(doseLog.scheduledTime)}';
+        statusText = 'Skipped at ${timeFormat.format(doseLog.actionTime ?? doseLog.scheduledTime)}';
         statusColor = AppColors.warning;
         statusBgColor = AppColors.warningLight;
         statusIcon = Icons.remove;

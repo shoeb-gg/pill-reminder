@@ -18,9 +18,10 @@ A Flutter medication reminder application that helps users manage their medicati
 ### Notification System: flutter_local_notifications
 - **Timezone-aware scheduling**: Uses `timezone` package with `flutter_timezone` for device timezone detection
 - **Fallback timezone logic**: Maps UTC offsets to timezone names when `FlutterTimezone` returns incorrect values
-- **Follow-up reminders**: Schedules 72 notifications (every 5 minutes for 6 hours) per reminder
+- **Follow-up reminders**: Schedules 12 notifications (every 15 minutes for 3 hours) per reminder slot
 - **Notification tags**: Uses tags to replace old notifications instead of stacking
 - **Action buttons**: Take/Skip buttons directly on notifications
+- **Payload format**: Uses millisecondsSinceEpoch for timezone-safe time storage
 
 ## Core Models
 
@@ -62,10 +63,11 @@ class DoseLog {
 
 ### 2. Smart Notifications
 - **Initial notification** at scheduled time
-- **72 follow-up notifications** if not acted upon (every 5 min for 6 hours)
+- **12 follow-up notifications** if not acted upon (every 15 min for 3 hours)
 - **Same notification tag** ensures only one shows at a time
-- **Weekly recurrence** using `DateTimeComponents.dayOfWeekAndTime`
+- **Weekly recurrence** using `DateTimeComponents.dayOfWeekAndTime` for ALL follow-ups
 - **Automatic cancellation** when Take/Skip is pressed
+- **~41 reminder slots** capacity (500 Android alarm limit / 12 notifications per slot)
 
 ### 3. Dose History
 - Logs every Take/Skip action with timestamp
@@ -103,20 +105,22 @@ Supports common timezones:
    ↓
 3. For each time + day combination:
    - Calculate next occurrence of that weekday/time
-   - Schedule 72 notifications (0min, 5min, 10min, ..., 355min)
+   - Schedule 12 notifications (0min, 15min, 30min, ..., 165min)
    - All use same tag: 'med_{medicationId}_{reminderIndex}'
+   - ALL notifications set to recur weekly
    ↓
 4. When scheduled time arrives:
    - First notification appears (i=0)
    ↓
 5. If user dismisses without action:
-   - 5 minutes later, next notification replaces it (i=1)
-   - Continues until i=71 (6 hours total)
+   - 15 minutes later, next notification replaces it (i=1)
+   - Continues until i=11 (3 hours total)
    ↓
 6. If user taps Take/Skip:
-   - All 72 pending notifications cancelled
+   - Current notification dismissed immediately
+   - All 12 pending notifications cancelled
+   - Existing pending DoseLog updated (or new one created)
    - Stock updated (if Take)
-   - DoseLog entry created
 ```
 
 ## Notification ID Generation
@@ -348,9 +352,11 @@ Potential improvements:
 
 ## Notes for AI Assistants
 
-- When modifying notification logic, remember to update both the scheduling (72 notifications) and cancellation (72 cancellations) loops
+- When modifying notification logic, remember to update both the scheduling (12 notifications) and cancellation (12 cancellations) loops
 - Stock changes should ONLY happen in `decrementStock()` method, called from notification callback
 - All times are stored in 24-hour format but displayed in 12-hour format
 - Timezone handling has fallback logic - don't remove it
 - Notification tags are critical for the "replace" behavior
-- Use `matchDateTimeComponents: DateTimeComponents.dayOfWeekAndTime` only for the first notification (i=0)
+- Use `matchDateTimeComponents: DateTimeComponents.dayOfWeekAndTime` for ALL notifications (not just i=0)
+- Payload uses millisecondsSinceEpoch for timezone-safe storage - don't use ISO8601 strings
+- Notification callback finds and updates existing pending DoseLog instead of creating duplicates

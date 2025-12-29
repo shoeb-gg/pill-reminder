@@ -33,17 +33,37 @@ void main() async {
     final medication = dbService.getMedication(medicationId);
     if (medication == null) return;
 
-    // Create new dose log entry
-    final newLog = DoseLog(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
-      medicationId: medicationId,
-      scheduledTime: scheduledTime,
-      actionTime: DateTime.now(),
-      status: action == 'take' ? DoseStatus.taken : DoseStatus.skipped,
-      pillsTaken: action == 'take' ? medication.pillsPerDose : 0,
+    final now = DateTime.now();
+
+    // Find existing pending dose log for this medication and scheduled time
+    final todayLogs = dbService.getDoseLogsForDate(scheduledTime);
+    final existingLog = todayLogs.cast<DoseLog?>().firstWhere(
+      (log) =>
+          log!.medicationId == medicationId &&
+          log.scheduledTime.hour == scheduledTime.hour &&
+          log.scheduledTime.minute == scheduledTime.minute &&
+          log.status == DoseStatus.pending,
+      orElse: () => null,
     );
 
-    dbService.addDoseLog(newLog);
+    if (existingLog != null) {
+      // Update existing log
+      existingLog.status = action == 'take' ? DoseStatus.taken : DoseStatus.skipped;
+      existingLog.actionTime = now;
+      existingLog.pillsTaken = action == 'take' ? medication.pillsPerDose : 0;
+      dbService.updateDoseLog(existingLog);
+    } else {
+      // Create new log if no pending one exists
+      final newLog = DoseLog(
+        id: '${medicationId}_${scheduledTime.millisecondsSinceEpoch}',
+        medicationId: medicationId,
+        scheduledTime: scheduledTime,
+        actionTime: now,
+        status: action == 'take' ? DoseStatus.taken : DoseStatus.skipped,
+        pillsTaken: action == 'take' ? medication.pillsPerDose : 0,
+      );
+      dbService.addDoseLog(newLog);
+    }
 
     // Decrement stock if taken
     if (action == 'take') {

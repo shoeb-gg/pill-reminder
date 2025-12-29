@@ -231,13 +231,20 @@ class _MedicationListItem extends StatelessWidget {
                 ),
               ],
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 12),
             GestureDetector(
               onTap: onDelete,
-              child: const Icon(
-                Icons.delete_outline,
-                color: AppColors.textMuted,
-                size: 20,
+              child: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: AppColors.dangerLight,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(
+                  Icons.delete_outline,
+                  color: AppColors.danger,
+                  size: 22,
+                ),
               ),
             ),
           ],

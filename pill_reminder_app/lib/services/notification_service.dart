@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest.dart' as tz_data;
@@ -82,13 +83,22 @@ class NotificationService {
     if (response.payload != null && response.actionId != null) {
       final payload = json.decode(response.payload!);
       final medicationId = payload['medicationId'] as String;
-      final scheduledTime = DateTime.parse(payload['scheduledTime'] as String);
+      final scheduledTimeMillis = payload['scheduledTime'] as int;
+      final scheduledTime = DateTime.fromMillisecondsSinceEpoch(scheduledTimeMillis);
       final reminderIndex = payload['reminderIndex'] as int? ?? 0;
       final action = response.actionId!;
 
       if (action == 'take' || action == 'skip') {
+        // Dismiss the current notification and cancel all follow-ups
+        final tag = 'med_${medicationId}_$reminderIndex';
+
+        // Cancel by ID with tag to dismiss displayed notification
+        if (response.id != null) {
+          _notifications.cancel(response.id!, tag: tag);
+        }
+
         // Cancel all follow-up reminders for this dose
-        _cancelFollowUpReminders(medicationId, reminderIndex);
+        _cancelFollowUpReminders(medicationId, reminderIndex, tag);
 
         // Trigger callback to update dose log
         onNotificationAction?.call(medicationId, action, scheduledTime);
@@ -96,11 +106,11 @@ class NotificationService {
     }
   }
 
-  Future<void> _cancelFollowUpReminders(String medicationId, int reminderIndex) async {
-    // Cancel all follow-up notifications (up to 72 reminders over 6 hours)
-    for (int i = 0; i < 72; i++) {
+  Future<void> _cancelFollowUpReminders(String medicationId, int reminderIndex, String tag) async {
+    // Cancel all follow-up notifications (12 reminders over 3 hours)
+    for (int i = 0; i < 12; i++) {
       final followUpId = _generateFollowUpId(medicationId, reminderIndex, i);
-      await _notifications.cancel(followUpId);
+      await _notifications.cancel(followUpId, tag: tag);
     }
   }
 
@@ -115,8 +125,13 @@ class NotificationService {
 
     // Don't schedule if no reminder days selected
     if (medication.reminderDays.isEmpty) {
+      debugPrint('NotificationService: No reminder days for ${medication.name}');
       return;
     }
+
+    debugPrint('NotificationService: Scheduling ${medication.name}');
+    debugPrint('NotificationService: Times: ${medication.scheduledTimes}');
+    debugPrint('NotificationService: Days: ${medication.reminderDays}');
 
     // Schedule notification for each time slot
     for (int i = 0; i < medication.scheduledTimes.length; i++) {
@@ -156,17 +171,23 @@ class NotificationService {
     final now = tz.TZDateTime.now(tz.local);
     var scheduledDate = _nextInstanceOfWeekdayTime(now, weekday, hour, minute);
 
+    debugPrint('NotificationService: Scheduling $medicationName for weekday $weekday at $hour:$minute');
+    debugPrint('NotificationService: Next occurrence: $scheduledDate');
+    debugPrint('NotificationService: Current time: $now');
+
     final title = 'Time to take $medicationName';
     final body = '$pillsPerDose ${pillsPerDose == 1 ? 'pill' : 'pills'}${dosage.isNotEmpty ? ' - $dosage' : ''}';
 
-    // Schedule initial notification + 72 follow-ups (every 5 min for 6 hours)
-    for (int i = 0; i < 72; i++) {
-      final followUpDate = scheduledDate.add(Duration(minutes: i * 5));
+    // Schedule initial notification + 11 follow-ups (every 15 min for 3 hours)
+    // Android has a limit of 500 concurrent alarms
+    // 12 notifications per slot = ~41 reminder slots capacity
+    for (int i = 0; i < 12; i++) {
+      final followUpDate = scheduledDate.add(Duration(minutes: i * 15));
       final followUpId = _generateFollowUpId(medicationId, reminderIndex, i);
 
       final payload = json.encode({
         'medicationId': medicationId,
-        'scheduledTime': scheduledDate.toIso8601String(),
+        'scheduledTime': scheduledDate.millisecondsSinceEpoch,
         'reminderIndex': reminderIndex,
       });
 
@@ -203,7 +224,7 @@ class NotificationService {
         androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
         uiLocalNotificationDateInterpretation:
             UILocalNotificationDateInterpretation.absoluteTime,
-        matchDateTimeComponents: i == 0 ? DateTimeComponents.dayOfWeekAndTime : null,
+        matchDateTimeComponents: DateTimeComponents.dayOfWeekAndTime, // Make ALL recurring
         payload: payload,
       );
     }
