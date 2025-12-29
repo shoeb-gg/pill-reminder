@@ -70,6 +70,16 @@ dev_dependencies:
   hive_generator: ^2.0.1
   build_runner: ^2.4.13
 
+  # App icon generation
+  flutter_launcher_icons: ^0.14.3
+
+flutter_launcher_icons:
+  android: true
+  ios: false
+  image_path: "assets/icons8-pill-100.png"
+  adaptive_icon_background: "#E8F5E9"
+  adaptive_icon_foreground: "assets/icons8-pill-100.png"
+
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
 
