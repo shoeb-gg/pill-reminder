@@ -30,37 +30,24 @@ void main() async {
   // Set up notification action callback
   final dbService = DatabaseService();
   NotificationService().onNotificationAction = (medicationId, action, scheduledTime) {
-    // Find the dose log for this medication and time
-    final logs = dbService.getDoseLogsForDate(scheduledTime);
-    final log = logs.cast<DoseLog?>().firstWhere(
-      (l) =>
-          l?.medicationId == medicationId &&
-          l?.scheduledTime.hour == scheduledTime.hour &&
-          l?.scheduledTime.minute == scheduledTime.minute,
-      orElse: () => null,
+    final medication = dbService.getMedication(medicationId);
+    if (medication == null) return;
+
+    // Create new dose log entry
+    final newLog = DoseLog(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      medicationId: medicationId,
+      scheduledTime: scheduledTime,
+      actionTime: DateTime.now(),
+      status: action == 'take' ? DoseStatus.taken : DoseStatus.skipped,
+      pillsTaken: action == 'take' ? medication.pillsPerDose : 0,
     );
 
-    if (log != null) {
-      if (action == 'take') {
-        final medication = dbService.getMedication(medicationId);
-        final pillsPerDose = medication?.pillsPerDose ?? 1;
-        final updatedLog = log.copyWith(
-          status: DoseStatus.taken,
-          actionTime: DateTime.now(),
-          pillsTaken: pillsPerDose,
-        );
-        dbService.updateDoseLog(updatedLog);
-        // Decrement stock
-        if (medication != null) {
-          dbService.decrementStock(medicationId, pillsPerDose);
-        }
-      } else if (action == 'skip') {
-        final updatedLog = log.copyWith(
-          status: DoseStatus.skipped,
-          actionTime: DateTime.now(),
-        );
-        dbService.updateDoseLog(updatedLog);
-      }
+    dbService.addDoseLog(newLog);
+
+    // Decrement stock if taken
+    if (action == 'take') {
+      dbService.decrementStock(medicationId, medication.pillsPerDose);
     }
   };
 

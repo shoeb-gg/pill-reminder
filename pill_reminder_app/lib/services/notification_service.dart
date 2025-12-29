@@ -83,18 +83,30 @@ class NotificationService {
       final payload = json.decode(response.payload!);
       final medicationId = payload['medicationId'] as String;
       final scheduledTime = DateTime.parse(payload['scheduledTime'] as String);
+      final reminderIndex = payload['reminderIndex'] as int? ?? 0;
       final action = response.actionId!;
 
       if (action == 'take' || action == 'skip') {
-        // Cancel this specific notification
-        if (response.id != null) {
-          _notifications.cancel(response.id!);
-        }
+        // Cancel all follow-up reminders for this dose
+        _cancelFollowUpReminders(medicationId, reminderIndex);
 
         // Trigger callback to update dose log
         onNotificationAction?.call(medicationId, action, scheduledTime);
       }
     }
+  }
+
+  Future<void> _cancelFollowUpReminders(String medicationId, int reminderIndex) async {
+    // Cancel all follow-up notifications (up to 72 reminders over 6 hours)
+    for (int i = 0; i < 72; i++) {
+      final followUpId = _generateFollowUpId(medicationId, reminderIndex, i);
+      await _notifications.cancel(followUpId);
+    }
+  }
+
+  int _generateFollowUpId(String medicationId, int reminderIndex, int followUpIndex) {
+    final hash = medicationId.hashCode.abs();
+    return (hash % 1000) * 100000 + reminderIndex * 1000 + followUpIndex;
   }
 
   Future<void> scheduleMedicationReminders(Medication medication) async {
@@ -115,76 +127,86 @@ class NotificationService {
 
       // Schedule for each reminder day
       for (final day in medication.reminderDays) {
-        final notificationId = _generateNotificationId(medication.id, i, day);
+        final reminderIndex = i * 7 + day;
 
-        await _scheduleWeeklyNotification(
-          id: notificationId,
-          title: 'Time to take ${medication.name}',
-          body: '${medication.pillsPerDose} ${medication.pillsPerDose == 1 ? 'pill' : 'pills'}${medication.dosage.isNotEmpty ? ' - ${medication.dosage}' : ''}',
+        await _scheduleWeeklyNotificationWithFollowUps(
+          medicationName: medication.name,
+          pillsPerDose: medication.pillsPerDose,
+          dosage: medication.dosage,
           hour: hour,
           minute: minute,
           weekday: day,
           medicationId: medication.id,
+          reminderIndex: reminderIndex,
         );
       }
     }
   }
 
-  Future<void> _scheduleWeeklyNotification({
-    required int id,
-    required String title,
-    required String body,
+  Future<void> _scheduleWeeklyNotificationWithFollowUps({
+    required String medicationName,
+    required int pillsPerDose,
+    required String dosage,
     required int hour,
     required int minute,
     required int weekday,
     required String medicationId,
+    required int reminderIndex,
   }) async {
     final now = tz.TZDateTime.now(tz.local);
     var scheduledDate = _nextInstanceOfWeekdayTime(now, weekday, hour, minute);
 
-    // Create payload with medication info
-    final payload = json.encode({
-      'medicationId': medicationId,
-      'scheduledTime': scheduledDate.toIso8601String(),
-    });
+    final title = 'Time to take $medicationName';
+    final body = '$pillsPerDose ${pillsPerDose == 1 ? 'pill' : 'pills'}${dosage.isNotEmpty ? ' - $dosage' : ''}';
 
-    await _notifications.zonedSchedule(
-      id,
-      title,
-      body,
-      scheduledDate,
-      NotificationDetails(
-        android: AndroidNotificationDetails(
-          'medication_reminders',
-          'Medication Reminders',
-          channelDescription: 'Notifications for medication reminders',
-          importance: Importance.high,
-          priority: Priority.high,
-          icon: '@mipmap/ic_launcher',
-          enableVibration: true,
-          playSound: true,
-          ongoing: true, // Can't be swiped away
-          autoCancel: false, // Don't dismiss on tap
-          actions: <AndroidNotificationAction>[
-            const AndroidNotificationAction(
-              'take',
-              'Take',
-              showsUserInterface: true,
-            ),
-            const AndroidNotificationAction(
-              'skip',
-              'Skip',
-              showsUserInterface: true,
-            ),
-          ],
+    // Schedule initial notification + 72 follow-ups (every 5 min for 6 hours)
+    for (int i = 0; i < 72; i++) {
+      final followUpDate = scheduledDate.add(Duration(minutes: i * 5));
+      final followUpId = _generateFollowUpId(medicationId, reminderIndex, i);
+
+      final payload = json.encode({
+        'medicationId': medicationId,
+        'scheduledTime': scheduledDate.toIso8601String(),
+        'reminderIndex': reminderIndex,
+      });
+
+      await _notifications.zonedSchedule(
+        followUpId,
+        i == 0 ? title : 'Reminder: $title',
+        i == 0 ? body : 'You haven\'t taken your medication yet.',
+        followUpDate,
+        NotificationDetails(
+          android: AndroidNotificationDetails(
+            'medication_reminders',
+            'Medication Reminders',
+            channelDescription: 'Notifications for medication reminders',
+            importance: Importance.high,
+            priority: Priority.high,
+            icon: '@mipmap/ic_launcher',
+            enableVibration: true,
+            playSound: true,
+            tag: 'med_${medicationId}_$reminderIndex', // Same tag replaces previous notification
+            actions: <AndroidNotificationAction>[
+              const AndroidNotificationAction(
+                'take',
+                'Take',
+                showsUserInterface: true,
+              ),
+              const AndroidNotificationAction(
+                'skip',
+                'Skip',
+                showsUserInterface: true,
+              ),
+            ],
+          ),
         ),
-      ),
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-      uiLocalNotificationDateInterpretation:
-          UILocalNotificationDateInterpretation.absoluteTime,
-      matchDateTimeComponents: DateTimeComponents.dayOfWeekAndTime,
-      payload: payload,
-    );
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime,
+        matchDateTimeComponents: i == 0 ? DateTimeComponents.dayOfWeekAndTime : null,
+        payload: payload,
+      );
+    }
   }
 
   tz.TZDateTime _nextInstanceOfWeekdayTime(
