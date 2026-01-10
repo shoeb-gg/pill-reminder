@@ -300,6 +300,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   void _handleTakeDose(DoseLog log, Medication medication) {
+    // Store previous state for undo
+    final previousStatus = log.status;
+    final previousActionTime = log.actionTime;
+    final previousPillsTaken = log.pillsTaken;
+    final previousStock = medication.currentStock;
+
     ref.read(doseLogsProvider.notifier).markDoseTaken(
           log,
           medication.pillsPerDose,
@@ -309,20 +315,65 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           medication.id,
           medication.pillsPerDose,
         );
+
+    ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text('${medication.name} marked as taken'),
         backgroundColor: AppColors.success,
+        duration: const Duration(seconds: 4),
+        action: SnackBarAction(
+          label: 'Undo',
+          textColor: Colors.white,
+          onPressed: () {
+            // Restore previous state
+            final dbService = ref.read(databaseServiceProvider);
+            log.status = previousStatus;
+            log.actionTime = previousActionTime;
+            log.pillsTaken = previousPillsTaken;
+            dbService.updateDoseLog(log);
+
+            // Restore stock
+            ref.read(medicationsProvider.notifier).updateStock(
+                  medication.id,
+                  previousStock,
+                );
+
+            // Refresh UI
+            ref.read(doseLogsProvider.notifier).loadLogsForDate(DateTime.now());
+          },
+        ),
       ),
     );
   }
 
   void _handleSkipDose(DoseLog log, Medication medication) {
+    // Store previous state for undo
+    final previousStatus = log.status;
+    final previousActionTime = log.actionTime;
+
     ref.read(doseLogsProvider.notifier).markDoseSkipped(log, medication: medication);
+
+    ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Dose skipped'),
+      SnackBar(
+        content: const Text('Dose skipped'),
         backgroundColor: AppColors.warning,
+        duration: const Duration(seconds: 4),
+        action: SnackBarAction(
+          label: 'Undo',
+          textColor: Colors.white,
+          onPressed: () {
+            // Restore previous state
+            final dbService = ref.read(databaseServiceProvider);
+            log.status = previousStatus;
+            log.actionTime = previousActionTime;
+            dbService.updateDoseLog(log);
+
+            // Refresh UI
+            ref.read(doseLogsProvider.notifier).loadLogsForDate(DateTime.now());
+          },
+        ),
       ),
     );
   }

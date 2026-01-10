@@ -4,12 +4,86 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest.dart' as tz_data;
 import 'package:flutter_timezone/flutter_timezone.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import '../models/medication.dart';
+import '../models/dose_log.dart';
+import '../services/database_service.dart';
 
 // Callback for handling notification actions in background
 @pragma('vm:entry-point')
-void notificationTapBackground(NotificationResponse response) {
-  // This will be handled when app opens
+void notificationTapBackground(NotificationResponse response) async {
+  debugPrint('NotificationService: Background notification tap - actionId: ${response.actionId}');
+
+  // Handle the action in background
+  if (response.payload != null && response.actionId != null) {
+    try {
+      final payload = json.decode(response.payload!);
+      final medicationId = payload['medicationId'] as String;
+      final scheduledTimeMillis = payload['scheduledTime'] as int;
+      final scheduledTime = DateTime.fromMillisecondsSinceEpoch(scheduledTimeMillis);
+      final reminderIndex = payload['reminderIndex'] as int? ?? 0;
+      final action = response.actionId!;
+
+      debugPrint('NotificationService: Background - medicationId: $medicationId, action: $action');
+
+      if (action == 'take' || action == 'skip') {
+        // Initialize Hive in background isolate
+        await Hive.initFlutter();
+        Hive.registerAdapter(MedicationAdapter());
+        Hive.registerAdapter(DoseLogAdapter());
+        Hive.registerAdapter(DoseStatusAdapter());
+        await Hive.openBox<Medication>('medications');
+        await Hive.openBox<DoseLog>('dose_logs');
+
+        final dbService = DatabaseService();
+        final medication = dbService.getMedication(medicationId);
+        if (medication == null) return;
+
+        final now = DateTime.now();
+
+        // Find existing pending dose log
+        final todayLogs = dbService.getDoseLogsForDate(scheduledTime);
+        final existingLog = todayLogs.cast<DoseLog?>().firstWhere(
+          (log) =>
+              log!.medicationId == medicationId &&
+              log.scheduledTime.hour == scheduledTime.hour &&
+              log.scheduledTime.minute == scheduledTime.minute &&
+              log.status == DoseStatus.pending,
+          orElse: () => null,
+        );
+
+        if (existingLog != null) {
+          existingLog.status = action == 'take' ? DoseStatus.taken : DoseStatus.skipped;
+          existingLog.actionTime = now;
+          existingLog.pillsTaken = action == 'take' ? medication.pillsPerDose : 0;
+          dbService.updateDoseLog(existingLog);
+        } else {
+          final newLog = DoseLog(
+            id: '${medicationId}_${scheduledTime.millisecondsSinceEpoch}',
+            medicationId: medicationId,
+            scheduledTime: scheduledTime,
+            actionTime: now,
+            status: action == 'take' ? DoseStatus.taken : DoseStatus.skipped,
+            pillsTaken: action == 'take' ? medication.pillsPerDose : 0,
+          );
+          dbService.addDoseLog(newLog);
+        }
+
+        if (action == 'take') {
+          dbService.decrementStock(medicationId, medication.pillsPerDose);
+        }
+
+        // Cancel follow-up notifications
+        final tag = 'med_${medicationId}_$reminderIndex';
+        final notificationService = NotificationService();
+        await notificationService._cancelFollowUpReminders(medicationId, reminderIndex, tag);
+
+        debugPrint('NotificationService: Background action completed');
+      }
+    } catch (e) {
+      debugPrint('NotificationService: Background error: $e');
+    }
+  }
 }
 
 class NotificationService {
@@ -34,21 +108,32 @@ class NotificationService {
     String timeZoneName;
     try {
       timeZoneName = await FlutterTimezone.getLocalTimezone();
+      debugPrint('NotificationService: FlutterTimezone returned: $timeZoneName');
 
       // If it returns UTC but device offset suggests otherwise, find the correct timezone
       if (timeZoneName == 'UTC') {
         final deviceOffset = DateTime.now().timeZoneOffset;
         if (deviceOffset.inMinutes != 0) {
           timeZoneName = _findTimezoneByOffset(deviceOffset);
+          debugPrint('NotificationService: Using offset-based timezone: $timeZoneName');
         }
       }
     } catch (e) {
+      debugPrint('NotificationService: FlutterTimezone error: $e');
       // Fallback based on device offset
       final deviceOffset = DateTime.now().timeZoneOffset;
       timeZoneName = _findTimezoneByOffset(deviceOffset);
+      debugPrint('NotificationService: Fallback timezone: $timeZoneName');
     }
 
-    tz.setLocalLocation(tz.getLocation(timeZoneName));
+    try {
+      tz.setLocalLocation(tz.getLocation(timeZoneName));
+    } catch (e) {
+      debugPrint('NotificationService: Failed to set timezone $timeZoneName: $e');
+      // Ultimate fallback - use UTC
+      tz.setLocalLocation(tz.UTC);
+      debugPrint('NotificationService: Using UTC as fallback');
+    }
 
     // Android settings
     const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
@@ -79,29 +164,38 @@ class NotificationService {
   }
 
   void _onNotificationTapped(NotificationResponse response) {
+    debugPrint('NotificationService: Notification tapped - actionId: ${response.actionId}, payload: ${response.payload}');
+
     // Handle notification action buttons
     if (response.payload != null && response.actionId != null) {
-      final payload = json.decode(response.payload!);
-      final medicationId = payload['medicationId'] as String;
-      final scheduledTimeMillis = payload['scheduledTime'] as int;
-      final scheduledTime = DateTime.fromMillisecondsSinceEpoch(scheduledTimeMillis);
-      final reminderIndex = payload['reminderIndex'] as int? ?? 0;
-      final action = response.actionId!;
+      try {
+        final payload = json.decode(response.payload!);
+        final medicationId = payload['medicationId'] as String;
+        final scheduledTimeMillis = payload['scheduledTime'] as int;
+        final scheduledTime = DateTime.fromMillisecondsSinceEpoch(scheduledTimeMillis);
+        final reminderIndex = payload['reminderIndex'] as int? ?? 0;
+        final action = response.actionId!;
 
-      if (action == 'take' || action == 'skip') {
-        // Dismiss the current notification and cancel all follow-ups
-        final tag = 'med_${medicationId}_$reminderIndex';
+        debugPrint('NotificationService: Parsed - medicationId: $medicationId, action: $action, scheduledTime: $scheduledTime');
 
-        // Cancel by ID with tag to dismiss displayed notification
-        if (response.id != null) {
-          _notifications.cancel(response.id!, tag: tag);
+        if (action == 'take' || action == 'skip') {
+          // Dismiss the current notification and cancel all follow-ups
+          final tag = 'med_${medicationId}_$reminderIndex';
+
+          // Cancel by ID with tag to dismiss displayed notification
+          if (response.id != null) {
+            _notifications.cancel(response.id!, tag: tag);
+          }
+
+          // Cancel all follow-up reminders for this dose
+          _cancelFollowUpReminders(medicationId, reminderIndex, tag);
+
+          // Trigger callback to update dose log
+          debugPrint('NotificationService: Calling onNotificationAction callback');
+          onNotificationAction?.call(medicationId, action, scheduledTime);
         }
-
-        // Cancel all follow-up reminders for this dose
-        _cancelFollowUpReminders(medicationId, reminderIndex, tag);
-
-        // Trigger callback to update dose log
-        onNotificationAction?.call(medicationId, action, scheduledTime);
+      } catch (e) {
+        debugPrint('NotificationService: Error handling notification tap: $e');
       }
     }
   }
@@ -211,12 +305,10 @@ class NotificationService {
               const AndroidNotificationAction(
                 'take',
                 'Take',
-                showsUserInterface: true,
               ),
               const AndroidNotificationAction(
                 'skip',
                 'Skip',
-                showsUserInterface: true,
               ),
             ],
           ),

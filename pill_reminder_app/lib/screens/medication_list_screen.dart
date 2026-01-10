@@ -160,10 +160,19 @@ class _MedicationListItem extends StatelessWidget {
     required this.onDelete,
   });
 
+  String _formatTimeTo12Hour(String time24) {
+    final parts = time24.split(':');
+    final hour = int.parse(parts[0]);
+    final minute = parts[1];
+    final period = hour >= 12 ? 'PM' : 'AM';
+    final hour12 = hour == 0 ? 12 : (hour > 12 ? hour - 12 : hour);
+    return '$hour12:$minute $period';
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheduleText = medication.scheduledTimes.isNotEmpty
-        ? 'Daily at ${medication.scheduledTimes.join(", ")}'
+        ? 'Daily at ${medication.scheduledTimes.map(_formatTimeTo12Hour).join(", ")}'
         : 'No schedule set';
 
     return GestureDetector(

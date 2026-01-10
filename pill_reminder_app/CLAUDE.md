@@ -66,7 +66,9 @@ class DoseLog {
 - **12 follow-up notifications** if not acted upon (every 15 min for 3 hours)
 - **Same notification tag** ensures only one shows at a time
 - **Weekly recurrence** using `DateTimeComponents.dayOfWeekAndTime` for ALL follow-ups
+- **Background action handling** with dedicated isolate for Take/Skip from notifications
 - **Automatic cancellation** when Take/Skip is pressed
+- **Undo feature** in app UI for accidental Take/Skip (4-second window)
 - **~41 reminder slots** capacity (500 Android alarm limit / 12 notifications per slot)
 
 ### 3. Dose History
@@ -151,14 +153,31 @@ Required permissions on Android 13+:
 ### 3. Background Notification Handling
 ```dart
 @pragma('vm:entry-point')
-void notificationTapBackground(NotificationResponse response) {
+void notificationTapBackground(NotificationResponse response) async {
   // Entry point for when app is terminated
+  // Initializes Hive in background isolate
+  // Handles Take/Skip actions without opening app
+  // Updates database and cancels follow-up notifications
 }
 ```
 
+### 4. Release Build Configuration
+**ProGuard/R8 Settings** (android/app/build.gradle.kts):
+```kotlin
+release {
+    isMinifyEnabled = false          // Prevents timezone data stripping
+    isShrinkResources = false
+    proguardFiles(...)               // Keeps notification classes
+}
+```
+
+**ProGuard Rules** (android/app/proguard-rules.pro):
+- Keeps flutter_local_notifications classes
+- Preserves timezone data for release builds
+
 ### 4. Time Formatting
 - All times stored in HH:mm format (24-hour)
-- UI shows 12-hour format with AM/PM
+- UI displays in 12-hour format with AM/PM (`h:mm a`)
 - Timezone-aware scheduling using `tz.TZDateTime`
 
 ## File Structure
@@ -354,9 +373,12 @@ Potential improvements:
 
 - When modifying notification logic, remember to update both the scheduling (12 notifications) and cancellation (12 cancellations) loops
 - Stock changes should ONLY happen in `decrementStock()` method, called from notification callback
-- All times are stored in 24-hour format but displayed in 12-hour format
+- All times are stored in 24-hour format but displayed in 12-hour format (use `DateFormat('h:mm a')`)
 - Timezone handling has fallback logic - don't remove it
 - Notification tags are critical for the "replace" behavior
 - Use `matchDateTimeComponents: DateTimeComponents.dayOfWeekAndTime` for ALL notifications (not just i=0)
 - Payload uses millisecondsSinceEpoch for timezone-safe storage - don't use ISO8601 strings
 - Notification callback finds and updates existing pending DoseLog instead of creating duplicates
+- Background notification actions run in separate isolate - must initialize Hive independently
+- Release builds require minification disabled to preserve timezone data
+- Undo feature stores previous state before modifications for 4-second rollback window

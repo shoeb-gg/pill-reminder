@@ -23,7 +23,7 @@ class MedicationCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final timeFormat = DateFormat('HH:mm');
+    final timeFormat = DateFormat('h:mm a');
     final isTaken = doseLog.status == DoseStatus.taken;
     final isSkipped = doseLog.status == DoseStatus.skipped;
     final isPending = doseLog.status == DoseStatus.pending;
